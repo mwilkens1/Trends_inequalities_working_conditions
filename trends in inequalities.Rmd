@@ -1,0 +1,42 @@
+---
+title: "Trends in inequalities"
+author: "Mathijn Wilkens"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document: 
+    css: custom.css
+    toc: true
+    toc_float: true
+---
+
+Import recoded data created in 'recode.R'
+
+```{r}
+
+load("data/EWCS_recoded.Rda")
+
+```
+
+
+Defining job quality indexes and covariates depending on the availability
+
+```{r}
+
+indexes_2000 <- c("physrsk","intensity""skilsdis","timequality","prospects")
+indexes_2005 <- c("physrsk","intensity""skilsdis","timequality")
+
+covariates_2005 <- c("country","nace","isco","sex","age","educ","wp_size","emp_stat")
+covariates_2000 <- c("country","nace","isco","sex","age","wp_size","emp_stat")
+covariates_1995 <- c("country","nace","isco","sex","age")
+
+```
+
+
+```{r}
+
+
+anova(lm(as.formula(paste("physrsk", " ~ ", paste(covariates_2000, collapse="+"))), data=EWCS))
+
+```
+
+
