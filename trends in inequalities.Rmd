@@ -5,11 +5,24 @@ date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: 
   html_document: 
     css: custom.css
-    toc: true
-    toc_float: true
+    toc: yes
+    toc_float: yes
 ---
 
-Import recoded data created in 'recode.R'
+# Introduction
+
+The aim is to do an analysis of variance (ANOVA) for the job quality indexes to find out the proportion of variance explained by the covariates available and relevant in the EWCS. Also, to analyse how much of the variance is associated with each covariate. Finally, to compare this over time to see if certain coviarates have become more or less important in explaining inequalities in job quality indexes. 
+
+# Preparation
+
+Source the Eurofound colours and load packages
+
+```{r include=FALSE}
+source("EF_colours.R")
+library(ggplot2)
+```
+
+Import recoded data created in 'recode.R'. There is a seperate R code file in the project directory that does some basic recoding of the data and checks what variables are available accross which waves of the survey. This file is the result of that. 
 
 ```{r}
 
@@ -17,26 +30,260 @@ load("data/EWCS_recoded.Rda")
 
 ```
 
-
 Defining job quality indexes and covariates depending on the availability
 
 ```{r}
 
-indexes_2000 <- c("physrsk","intensity""skilsdis","timequality","prospects")
-indexes_2005 <- c("physrsk","intensity""skilsdis","timequality")
+indexes_2005 <- c("physrsk","intensity","skilsdis","timequality","prospects")
+indexes_2000 <- c("physrsk","intensity","skilsdis","timequality")
+
+indexes_2005_labels <- c("Physical risks","Intensity","Skills and discretion","Working time quality","Prospects")
+indexes_2000_labels <- c("Physical risks","Intensity","Skills and discretion","Working time quality")
 
 covariates_2005 <- c("country","nace","isco","sex","age","educ","wp_size","emp_stat")
 covariates_2000 <- c("country","nace","isco","sex","age","wp_size","emp_stat")
 covariates_1995 <- c("country","nace","isco","sex","age")
 
+covariates_2005_labels <- c("Country","Sector","Occupation","Sex","Age","Education","Workplace size","Employment status")
+covariates_2000_labels <- c("Country","Sector","Occupation","Sex","Age","Workplace size","Employment status")
+covariates_1995_labels <- c("Country","Sector","Occupation","Sex","Age")
+
+levels(EWCS$wave) <- c("1995","2000","2005","2010","2015")
+
 ```
 
+# ANOVA, all years pooled
+
+Running ANOVA for all years pooled, by index. First, a function for the underlying regression model that takes the depenent variable y, a vector of covariates x and a dataframe as an input and outputs the regression results. Then, in another function anova is wrapped around that regression function and this together is applied to all job quality indexes. There is an option for pooling all the years and an option for running for each year seperately.
 
 ```{r}
 
+lin_mod <- function(y,x,df) { lm(as.formula(paste(y, " ~ ", paste(x, collapse="+"))), data=df, weights=w4) }
 
-anova(lm(as.formula(paste("physrsk", " ~ ", paste(covariates_2000, collapse="+"))), data=EWCS))
+anova_func <- function(indexes,covariates,df,index_labels,covariate_labels,pooled=TRUE,years=levels(EWCS$wave)) {
+  
+  if (pooled==TRUE) {
+  
+    # if pooled, apply over the vector of indexes, returning a list with the indexes as elements
+    out <- lapply(indexes, function(y)  anova( lin_mod(y, covariates, df)) )
+
+
+    out <- lapply(out, function(x) {
+      
+                       rownames(x) <- c(covariate_labels,"Residuals")
+                       
+                       return(x) })
+  
+  } else {
+    
+    # if pooled is false, apply over the years and return a list with the indexes as elements. Each element is a list with years as elements 
+    
+    out <- lapply(indexes, function(y)  {
+      
+              out <- lapply(years, function(t) anova( lin_mod(y, covariates, subset(df, wave==t)) )) 
+              
+              out <- lapply(out, function(x) {
+      
+                       rownames(x) <- c(covariate_labels,"Residuals")
+                       
+                       return(x) })
+              
+              names(out) <- years
+              
+              return(out)
+     
+    })
+  
+  }
+  
+  names(out) <- index_labels
+  
+  return(out)
+   
+}
 
 ```
 
+Run the functions
+
+```{r }
+
+anova_pooled_2000 <-  anova_func(indexes = indexes_2000, 
+                                 covariates = covariates_2000, 
+                                 df = EWCS, 
+                                 index_labels = indexes_2000_labels, 
+                                 covariate_labels = covariates_2000_labels, 
+                                 pooled=TRUE)
+
+
+anova_pooled_2005 <-  anova_func(indexes = indexes_2005, 
+                                 covariates = covariates_2005, 
+                                 df = EWCS, 
+                                 index_labels = indexes_2005_labels, 
+                                 covariate_labels = covariates_2005_labels, 
+                                 pooled=TRUE)
+
+
+```
+
+Defining a function to create plottable data
+
+```{r}
+plot_pooled <- function(x) {
+
+    df <- data.frame(x)
+
+    sumsq <- sum(df[2])
+  
+    df_plot <- data.frame(df[2] / sumsq)
+    df_plot$variable <- rownames(df)
+    colnames(df_plot) <- c("SSR","variable")
+
+    return(df_plot)
+    
+}
+```
+
+Plotting pooled years from 2000
+
+```{r, fig.height=2.5, fig.width=8}
+
+plotdata_list <- lapply(anova_pooled_2000, plot_pooled)
+df_plot <- do.call("rbind",plotdata_list)
+df_plot$Index <- sub('\\..*', '', rownames(df_plot))
+
+ggplot(df_plot[df_plot$variable!="Residuals",],aes(x=variable, y=SSR, fill=variable)) + 
+  coord_flip() + 
+  facet_wrap( ~ Index, ncol=5) +
+  geom_bar(stat="identity", colour="black") + 
+  ylab("Proportion of explained variance") + 
+  ggtitle("ANOVA 2000 - 2015 (pooled)") +
+  theme_bw(base_size = 11) + 
+  theme(axis.title.y = element_blank(),
+        plot.title = element_text(size=12),
+        panel.spacing = unit(1,"lines"),
+        legend.position = "none") 
+
+```
+
+Plotting pooled years from 2005
+
+```{r, fig.height=2.5, fig.width=10}
+
+plotdata_list <- lapply(anova_pooled_2005, plot_pooled)
+df_plot <- do.call("rbind",plotdata_list)
+df_plot$Index <- sub('\\..*', '', rownames(df_plot))
+
+ggplot(df_plot[df_plot$variable!="Residuals",],aes(x=variable, y=SSR, fill=variable)) + 
+  coord_flip() + 
+  facet_wrap( ~ Index, ncol=5) +
+  geom_bar(stat="identity", colour="black") + 
+  ylab("Proportion of explained variance") +
+  ggtitle("ANOVA 2005 - 2015 (pooled)") +
+  theme_bw(base_size = 11) + 
+  theme(axis.title.y = element_blank(),
+        plot.title = element_text(size=12),
+        panel.spacing = unit(1,"lines"),
+        legend.position = "none") 
+```
+
+From the above we can conclude that the 2000 - 2015 pooled ANOVA is not very different from the 2005 - 2015 pooled ANOVA. Education, a covariate only available from 2005 does not seem to be important in explaining variance in job quality indexes.
+
+# ANOVA, by year
+
+Next step is to break down the ANOVA by year to assess if there are any trends in explained variance. This is done by creating a list (years) of lists (indexes) as one object by running one apply function in the other. 
+
+```{r}
+anova_year_2000 <- anova_func(indexes = indexes_2000, 
+                              covariates = covariates_2000, 
+                              df = EWCS, 
+                              index_labels = indexes_2000_labels, 
+                              covariate_labels = covariates_2000_labels, 
+                              pooled=FALSE,
+                              years = levels(EWCS$wave)[-1])
+
+
+anova_year_2005 <- anova_func(indexes = indexes_2005, 
+                              covariates = covariates_2005, 
+                              df = EWCS, 
+                              index_labels = indexes_2005_labels, 
+                              covariate_labels = covariates_2005_labels, 
+                              pooled=FALSE,
+                              years = levels(EWCS$wave)[-c(1,2)])
+
+```
+
+Next step is visualising the trends. First up a function for preparing the data for plotting. 
+
+```{r}
+
+prep_plot_data <- function(l) {
+
+  plot_data <- lapply(l, function(index) {
+  
+    plotdata_list <- lapply(index, plot_pooled)
+    
+    df_plot <- do.call("rbind",plotdata_list)
+    
+    df_plot$Year <- sub('\\..*', '', rownames(df_plot))
+    
+    return(df_plot)
+  
+  })
+  
+  df_plot <- do.call("rbind",plot_data)
+  
+  df_plot$Index <- sub('\\..*', '', rownames(df_plot))
+  
+  return(df_plot)
+
+}
+
+
+```
+
+Running the function and plotting the data
+
+```{r, fig.height=2.5, fig.width=10}
+df_plot <- prep_plot_data(anova_year_2000)
+
+ggplot(df_plot[df_plot$variable!="Residuals",], aes(x=Year, y=SSR, fill=variable)) + 
+  coord_flip() +
+  facet_wrap(~ Index, nrow=1) +
+  geom_bar(stat="identity", colour="black") +
+  ylab("Proportion of explained variance") +
+  ggtitle("ANOVA 2000 - 2015") +
+  theme_bw(base_size = 11) + 
+  theme(axis.title.y = element_blank(),
+        plot.title = element_text(size=12),
+        panel.spacing = unit(1,"lines"),
+        legend.title = element_blank()) 
+
+```
+
+
+```{r, fig.height=4, fig.width=8}
+df_plot <- prep_plot_data(anova_year_2005)
+
+ggplot(df_plot[df_plot$variable!="Residuals",], aes(x=Year, y=SSR, fill=variable)) + 
+  coord_flip() +
+  facet_wrap(~ Index, nrow=2) +
+  geom_bar(stat="identity", colour="black") +
+  ylab("Proportion of explained variance") +
+  ggtitle("ANOVA 2005 - 2015") +
+  theme_bw(base_size = 11) + 
+  guides(fill=guide_legend(ncol=2)) + 
+  theme(axis.title.y = element_blank(),
+        plot.title = element_text(size=12),
+        panel.spacing = unit(1,"lines"),
+        legend.position = c(0.84,0.2),
+        legend.title = element_blank()) 
+
+```
+
+The plots show that the proportion of variance explained by each covariate did not change much over the years. There seems to be a decline in the proportion of explained variance overall for physical risks, working time quality and prospects. 
+
+# Conclusion
+
+Depending on the index, the covariates included here explain about a quarter of the variance. This means that the inequalities in job quality are mostly explained by other variables or is random. Sector, occupation and country are the most important predictors and employment status is relevant for some indexes. Sex, age, education and workplace size seem to not be related at all. This may be the result of endogeneity, e.g. lower educated workers being more present in certain sectors. Over time there is very little change in the proportion of variance that each of the variables explains; it seems to be quite constant so there is no evidence to suggest that inequalities today are driven by other things than that were driving inequalities in the visible past. 
 
