@@ -1,0 +1,28 @@
+ spss ='R:\SpssStata\Mathijn\Trends_inequalities_working_conditions\data\ewcs_recoded.sav';
+
+model  cluster 1 : 8 /
+  maxthreads=all  toler=1e-008  tolem=0.01  tolran=1e-005  bayes=0  bayess2=1  bayeslat=0
+  bayespoi=1
+  iterem=250  iternr=50  itersv=80
+  iterboot=500
+  nseed=0  nseedboot=0
+  nrand=25
+  usemiss=All
+  sewald=yes  dummy=no  equscore=yes
+ outsect=0x00001dff
+ betaopts="wm"
+;
+indicator physrsk intensity skilsdis timequality;
+covariate wave country nace isco sex age;
+attr wave nominal  ;
+attr physrsk continuous  ;
+attr intensity continuous  ;
+attr skilsdis continuous  ;
+attr timequality continuous  ;
+attr country nominal  ;
+attr nace nominal  ;
+attr isco nominal  ;
+attr sex nominal  ;
+attr age ordinal  ;
+
+end;

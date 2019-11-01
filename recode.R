@@ -30,6 +30,27 @@ EWCS$educ <- ordered(EWCS_orig$education)
 EWCS$wp_size <- ordered(EWCS_orig$wp_size)
 EWCS$emp_stat <- EWCS_orig$emp_stat_lt
 
+levels(EWCS$isco) <- c("Armed forces","Managers","Professionals","Technicians","Clerks","Service and sales",
+                      "Agricultural workers","Craft workers","Plant and machine operators","Elementary occupations")
+
+
+
+
+EWCS$nace8[EWCS$nace=="A-B Agriculture, hunting, forestry, fishing"] <- "Agriculture"
+EWCS$nace8[EWCS$nace=="C-D Mining, quarrying, Manufacturing"] <- "Industry"
+EWCS$nace8[EWCS$nace=="E Electricity, gas, and water supply"] <- "Industry"
+EWCS$nace8[EWCS$nace=="F Construction"] <- "Construction"
+EWCS$nace8[EWCS$nace=="G Wholesale and retail trade; repair of motor vehicles and motorcycles"] <- "Commerce and hospitality"
+EWCS$nace8[EWCS$nace=="H Hotels and restaurants"] <- "Commerce and hospitality"
+EWCS$nace8[EWCS$nace=="I Transport, storage and communication"] <- "Transport"
+EWCS$nace8[EWCS$nace=="J Financial intermediation"] <- "Financial services"
+EWCS$nace8[EWCS$nace=="K Real estate activities"] <- "Financial services"
+EWCS$nace8[EWCS$nace=="L Public administration and defence; compulsory social security" ] <- "Public administration"
+EWCS$nace8[EWCS$nace=="M-N-O-P-Q Other services"  ] <- "Other services"
+
+EWCS$nace8 <- as.factor(EWCS$nace8)
+
+
 # Weight
 EWCS$w_time <- EWCS_orig$w_time
 EWCS$w4 <- EWCS_orig$w4
@@ -53,3 +74,8 @@ for (y in colnames(EWCS)[-1]) {
 df
 
 save(EWCS,file="data/EWCS_recoded.Rda")
+
+haven::write_sav(EWCS, "data/ewcs_recoded.sav")
+
+haven::write_sav(
+  subset(EWCS, wave!="1995 - 2nd EWCS" & wave!="2000-2001 - 3rd EWCS"), "data/ewcs_recoded_3waves.sav")

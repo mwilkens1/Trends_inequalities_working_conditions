@@ -11,7 +11,7 @@ output:
 
 # Introduction
 
-The aim is to do an analysis of variance (ANOVA) for the job quality indexes to find out the proportion of variance explained by the covariates available and relevant in the EWCS. Also, to analyse how much of the variance is associated with each covariate. Finally, to compare this over time to see if certain coviarates have become more or less important in explaining inequalities in job quality indexes. 
+The aim is to do an analysis of variance (ANOVA) for the job quality indexes to find out the proportion of variance explained by the covariates available and relevant in the EWCS. Also, to analyse how much of the variance is associated with each covariate. Finally, to compare this over time to see if certain coviarates have become more or less important in explaining inequalities in job quality indexes. Before all that, the code outputs plots that show the development in the mean and standard deviation over time by different breakdown variables. 
 
 # Preparation
 
@@ -20,6 +20,9 @@ Source the Eurofound colours and load packages
 ```{r include=FALSE}
 source("EF_colours.R")
 library(ggplot2)
+library(dplyr)
+library(survey)
+library(gridExtra)
 ```
 
 Import recoded data created in 'recode.R'. There is a seperate R code file in the project directory that does some basic recoding of the data and checks what variables are available accross which waves of the survey. This file is the result of that. 
@@ -37,8 +40,8 @@ Defining job quality indexes and covariates depending on the availability
 indexes_2005 <- c("physrsk","intensity","skilsdis","timequality","prospects")
 indexes_2000 <- c("physrsk","intensity","skilsdis","timequality")
 
-indexes_2005_labels <- c("Physical risks","Intensity","Skills and discretion","Working time quality","Prospects")
-indexes_2000_labels <- c("Physical risks","Intensity","Skills and discretion","Working time quality")
+indexes_2005_labels <- c("Physical environment","Intensity","Skills and discretion","Working time quality","Prospects")
+indexes_2000_labels <- c("Physical environment","Intensity","Skills and discretion","Working time quality")
 
 covariates_2005 <- c("country","nace","isco","sex","age","educ","wp_size","emp_stat")
 covariates_2000 <- c("country","nace","isco","sex","age","wp_size","emp_stat")
@@ -49,6 +52,425 @@ covariates_2000_labels <- c("Country","Sector","Occupation","Sex","Age","Workpla
 covariates_1995_labels <- c("Country","Sector","Occupation","Sex","Age")
 
 levels(EWCS$wave) <- c("1995","2000","2005","2010","2015")
+
+```
+
+# Descriptives
+
+Create survey design object for including the weights
+
+```{r}
+svyd <- svydesign(~1, data=EWCS[EWCS$wave!="1995",],weights=EWCS[EWCS$wave!="1995",]$w_time)
+```
+
+Plotting the mean and standard deviation per index overall. 
+
+```{r}
+meansd_total <- function(y) {
+
+  x_form <- formula(paste("~wave"))
+  y_form <- formula(paste("~",y))
+  
+  mean <- svyby(y_form,x_form ,svyd,svymean, na.rm = TRUE) %>%
+    rename("mean" = y) %>%
+    select(-se)
+  
+  sd   <- svyby(y_form,x_form, svyd, svyvar, na.rm = TRUE) %>%
+    rename("sd" = y) %>%
+    mutate("sd" = sqrt(sd)) %>%
+    select(-se)
+
+  df <- left_join(mean, sd, by=c("wave")) %>%
+    mutate(mean = mean / mean[wave==2005] * 100,
+           sd = sd / sd[wave==2005] * 100) %>%
+    reshape2::melt(id=c("wave")) %>%
+    filter(value>0)
+  
+  return(df)
+
+}
+
+df <- lapply(indexes_2005,meansd_total)
+names(df) <- indexes_2005_labels
+df <- do.call("rbind",df)
+df$index <- sub("\\..*", "", rownames(df))
+
+ggplot(df, aes(x=wave, y=value, colour=variable, group=variable)) + 
+  facet_wrap(~index) +
+  geom_line(size=1) +
+  geom_point(size=3) +
+  scale_colour_manual(values=EF_2c) +
+  ylab("Index (2005=100)") +
+  theme_bw() +
+    theme(axis.title.x = element_blank(),
+          legend.title = element_blank(),
+          legend.position = c(0.85,0.1))
+  
+```
+
+Function for means and standard deviations with breakdown variables
+
+```{r}
+meansd <- function(y,x) {
+
+  x_form <- formula(paste("~wave+",x))
+  y_form <- formula(paste("~",y))
+  
+  mean <- svyby(y_form,x_form ,svyd,svymean, na.rm = TRUE) %>%
+    rename("mean" = y) %>%
+    select(-se)
+  
+  sd   <- svyby(y_form,x_form, svyd, svyvar, na.rm = TRUE) %>%
+    rename("sd" = y) %>%
+    mutate("sd" = sqrt(sd)) %>%
+    select(-se)
+
+  df <- left_join(mean, sd, by=c("wave",colnames(mean)[2])) %>%
+    reshape2::melt(id=c("wave",colnames(mean)[2])) %>%
+    filter(value>0)
+  
+  return(df)
+
+}
+
+```
+
+
+## NACE
+
+Function to plot the indices by variable
+
+
+```{r, fig.height=5, fig.width=8}
+
+plot_function <- function(index,breakdown,num_cols,output_width=8,output_height=5, mean_nudge=0.8, sd_nudge=0.45, round_mean=5, round_sd=2,size_adjustment,legend_height_nudge) {
+  
+  #Getting means and standar deviations
+  df <- meansd(y=index,x=breakdown)
+  
+  #Determining the number of levels of the breakdown variable and splitting them into groups
+  num_levels <- length(levels(df[,breakdown]))
+  
+  levels_breakdown <- levels(df[,breakdown])
+  
+  levels_per_column <- num_levels / num_cols
+  
+  #Finding sinsible values for axis
+  mround <- function(x,base,dir){
+      
+        if (dir=="up") {
+          if (x>base*round(x/base)) {
+            base*round(x/base)+base    
+            } else {
+            base*round(x/base)
+            }
+        } else if (dir=="down") {
+          if (x<base*round(x/base)) {
+            base*round(x/base)-base    
+            } else {
+            base*round(x/base)
+            }
+        }
+  }
+  
+  min_mean <- mround(min(df[df$variable=="mean",]$value),round_mean,"down")
+  max_mean <- mround(max(df[df$variable=="mean",]$value),round_mean,"up")
+  min_sd <- mround(min(df[df$variable=="sd",]$value),round_sd,"down")
+  max_sd <- mround(max(df[df$variable=="sd",]$value),round_sd,"up")
+  
+  form <- as.formula(paste0("~",breakdown))
+  
+  #Plotting the means 
+  mean_plot <- function(levelselection) {
+    
+    ggplot(df[df$variable=="mean" & is.element(df[,breakdown],levelselection),], aes(x=wave,y=value, group=variable)) + 
+    geom_line(size=1, aes(color="Mean")) +
+    geom_point(size=3, aes(color="Mean")) +
+    scale_color_manual(values=EF_blue) + 
+    scale_y_continuous(limits = c(min_mean,max_mean),breaks= scales::pretty_breaks()) +
+    theme_bw() +
+      theme(axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            panel.grid.minor = element_blank(),
+            plot.margin=unit(c(0.1,0,0,0.2), "cm"),
+            strip.background = element_blank(),
+            strip.text = element_text(hjust=0),
+            legend.position = c(mean_nudge,legend_height_nudge),
+            legend.title = element_blank(),
+            legend.background = element_blank())
+    
+  }
+  
+  #Plotting the standard deviations
+  sd_plot <- function(levelselection) {
+
+    ggplot(df[df$variable=="sd"  & is.element(df[,breakdown],levelselection),], aes(x=wave,y=value, group=variable)) + 
+    geom_line(size=1, aes(color="Standard deviation")) +
+    geom_point(size=3, aes(color="Standard deviation")) +
+    scale_color_manual(values=EF_orange) + 
+    scale_y_continuous(position = "right", limits=c(min_sd,max_sd), breaks= scales::pretty_breaks()) +
+    theme_bw() +
+      theme(axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            panel.grid.minor = element_blank(),
+            plot.margin=unit(c(0.1,0.2,0,0), "cm"),
+            strip.background = element_blank(),
+            strip.text = element_text(color="white"),
+            legend.position = c(sd_nudge,legend_height_nudge),
+            legend.title = element_blank(),
+            legend.background = element_blank())
+  }
+  
+  #Collecting the columns
+  collection <- NULL
+  
+  for (i in 1:num_levels) {
+    
+      assign(paste0("p_mean_",i), mean_plot(levels_breakdown[[i]]))
+      assign(paste0("p_sd_",i), sd_plot(levels_breakdown[[i]]))
+      
+    
+    if ((i!=num_levels & levels_per_column%%1==0) | (levels_per_column%%1!=0 & i!=num_levels-1)) {
+    
+      assign(paste0("p_mean_",i), get(paste0("p_mean_",i)) + theme(legend.position = "none"))
+      assign(paste0("p_sd_",i)  , get(paste0("p_sd_",i))   + theme(legend.position = "none"))
+      
+    } 
+      
+    if (i<num_levels-num_cols+1)  {
+      
+      assign(paste0("p_mean_",i), get(paste0("p_mean_",i)) + theme(axis.text.x  = element_blank(),
+                                                                   axis.ticks.x = element_blank()))
+      assign(paste0("p_sd_",i), get(paste0("p_sd_",i)) + theme(axis.text.x  = element_blank(),
+                                                                   axis.ticks.x = element_blank()))
+      
+    } else if (levels_per_column%%1==0 | levels_per_column%%1!=0 & (i==num_levels-1 | i==num_levels)) {
+      
+      assign(paste0("p_mean_",i), get(paste0("p_mean_",i)) + theme(plot.margin=unit(c(0.1,0,0.8,0.2), "cm")))
+      assign(paste0("p_sd_",i), get(paste0("p_sd_",i))     + theme(plot.margin=unit(c(0.1,0.2,0.8,0), "cm")))
+      
+    }
+    
+    element <- list(as.name(paste0("p_mean_",i)),as.name(paste0("p_sd_",i)))
+    assign(paste0("p_",i), do.call("arrangeGrob", args=c(grobs=element,
+                                                           list(nrow=1, top=textGrob(levels_breakdown[[i]],gp=gpar(fontsize=9))))))
+  
+    collection <- c(collection,as.name(paste0("p_",i)))
+  
+    
+  }
+
+  #If the number of levels cannot be divided with the number of columns, add blank chart to fill it up
+  if (levels_per_column%%1!=0) {
+    
+    blank <- ggplot()  + theme(panel.background = element_rect(fill="white"),
+                               plot.margin=unit(c(0.1,0,0.8,0.2), "cm"))
+    element <- list(as.name("blank"),as.name("blank"))
+    assign("blank_comb", do.call("arrangeGrob", args=c(grobs=element,list(nrow=1, top=textGrob("",gp=gpar(fontsize=9))))))
+    
+    collection <- c(collection,as.name("blank_comb"))
+    
+    collection_special <- NULL
+    
+    for (i in 1:num_cols) {
+    
+    selection <- seq(from=i, to=length(collection) ,by=num_cols)  
+
+    heights <- NULL
+    
+    if (i!=num_cols) {
+      
+      for (j in seq(1:(length(collection)/num_cols)))
+      
+        if (j!=length(collection)/num_cols) {
+      
+          heights <- c(heights,1)
+        
+        } else {
+          
+          heights <- c(heights,size_adjustment)
+          
+        }
+      
+    } else {
+      
+      for (j in seq(1:(length(collection)/num_cols)))
+      
+        if (j!=length(collection)/num_cols-1) {
+      
+          heights <- c(heights,1)
+        
+        } else {
+          
+          heights <- c(heights,size_adjustment)
+          
+        }
+      
+    }
+
+    assign(paste0("collection_",i), do.call("arrangeGrob", 
+                                            args=c(grobs=collection[selection],
+                                                   list(ncol=1,heights=heights))))  
+
+    collection_special <- c(collection_special,as.name(paste0("collection_",i)))  
+    
+    }
+
+    collection <- collection_special
+
+    p <- do.call("grid.arrange",args=c(grobs=collection,list(nrow=length(collection)/num_cols)))
+    
+  } else {
+  
+    heights <- NULL
+    for (i in seq(1,length(collection)/num_cols)) {
+      
+      if (i!=length(collection)/num_cols) {
+        
+        heights <- c(heights,1)
+        
+      } else {
+        
+        heights <- c(heights,size_adjustment)
+        
+      }
+    }
+    
+    p <- do.call("grid.arrange",args=c(grobs=collection,list(nrow=length(collection)/num_cols,heights=heights)))
+    
+  }
+  
+  
+  #Write to .eps and to .png
+  ggsave(paste0(breakdown,"_",index,".eps"), plot = p, device = "eps", scale=1, path = "plots" ,
+        width = output_width, height = output_height, units = "in")
+   
+  ggsave(paste0(breakdown,"_",index,".png"), plot = p, device = "png", scale=1, path = "plots" ,
+        width = output_width, height = output_height, units = "in")
+
+  }
+
+```
+
+
+Physical environment
+
+```{r, fig.height=5, fig.width=8}
+
+plot_function(index="physrsk",breakdown="nace8",num_cols=2,size_adjustment=1.4,legend_height_nudge=-0.4)
+
+```
+
+
+
+Intensity
+
+```{r, fig.height=5, fig.width=8}
+plot_function(index="intensity",breakdown="nace8",num_cols=2,size_adjustment=1.4,legend_height_nudge=-0.4)
+```
+
+Skills and discretion
+
+```{r, fig.height=5, fig.width=8}
+plot_function(index="skilsdis",breakdown="nace8",num_cols=2,size_adjustment=1.4,legend_height_nudge=-0.4)
+```
+
+Working time quality
+
+```{r, fig.height=5, fig.width=8}
+plot_function(index="timequality",breakdown="nace8",num_cols=2,size_adjustment=1.4,legend_height_nudge=-0.4)
+```
+
+Job prospects
+
+```{r, fig.height=5, fig.width=8}
+plot_function(index="prospects",breakdown="nace8",num_cols=2,size_adjustment=1.4,legend_height_nudge=-0.4)
+```
+
+## ISCO
+
+Exclude armed forces
+```{r}
+EWCS_subs <- subset(EWCS, wave!="1995" & isco!="Armed forces")
+EWCS_subs$isco <- droplevels(EWCS_subs$isco)
+svyd <- svydesign(~1, data=EWCS_subs, weights=EWCS_subs$w_time)
+```
+
+Physical risks
+
+```{r, fig.height=5, fig.width=9}
+plot_function(index="physrsk",breakdown="isco",num_cols=3, output_width = 9, mean_nudge=0.5, size_adjustment = 1.3, legend_height_nudge=-0.25)
+```
+
+Intensity
+
+```{r, fig.height=5, fig.width=9}
+
+plot_function(index="intensity",breakdown="isco",num_cols=3, output_width = 9, mean_nudge=0.5, size_adjustment = 1.3, legend_height_nudge=-0.25)
+```
+
+Skills and discretion
+
+```{r, fig.height=5, fig.width=9}
+
+plot_function(index="skilsdis",breakdown="isco",num_cols=3, output_width = 9, mean_nudge=0.5, size_adjustment = 1.3, legend_height_nudge=-0.25)
+
+```
+
+Working time quality
+
+```{r, fig.height=5, fig.width=9}
+plot_function(index="timequality",breakdown="isco",num_cols=3, output_width = 9, mean_nudge=0.5, size_adjustment = 1.3, legend_height_nudge=-0.25, round_mean=10, round_sd=5)
+
+```
+
+Job prospects
+
+```{r, fig.height=5, fig.width=9}
+
+plot_function(index="prospects",breakdown="isco",num_cols=3, output_width = 9, mean_nudge=0.5, size_adjustment = 1.3, legend_height_nudge=-0.25)
+
+```
+
+## Employment status
+
+```{r}
+EWCS_subs <- subset(EWCS, wave!="1995")
+levels(EWCS_subs$emp_stat) <- c("Self-employed with employees","Self-employed without employees","Employee with indefinite contract","Employee with fixed-term contract","Other / no contract")
+svyd <- svydesign(~1, data=EWCS_subs, weights=EWCS_subs$w_time)
+```
+
+Physical risks
+
+```{r, fig.height=5, fig.width=8}
+plot_function(index="physrsk",breakdown="emp_stat",num_cols=2, mean_nudge=0.8, size_adjustment = 1.3, legend_height_nudge=-0.25, round_mean=10, round_sd=5)
+
+```
+
+Intensity
+```{r, fig.height=5, fig.width=8}
+plot_function(index="timequality",breakdown="emp_stat",num_cols=2, mean_nudge=0.8, size_adjustment = 1.3, legend_height_nudge=-0.25, round_mean=10, round_sd=5)
+
+```
+
+Skills and discretion
+
+```{r, fig.height=5, fig.width=8}
+plot_function(index="skilsdis",breakdown="emp_stat",num_cols=2, mean_nudge=0.8, size_adjustment = 1.3, legend_height_nudge=-0.25)
+
+```
+
+Working time quality
+
+```{r, fig.height=5, fig.width=8}
+plot_function(index="timequality",breakdown="emp_stat",num_cols=2, mean_nudge=0.8, size_adjustment = 1.3, legend_height_nudge=-0.25, round_mean=10, round_sd=5)
+
+```
+
+Job prospects
+
+```{r, fig.height=5, fig.width=8}
+plot_function(index="prospects",breakdown="emp_stat",num_cols=2, mean_nudge=0.8, size_adjustment = 1.3, legend_height_nudge=-0.25, round_mean=10, round_sd=10)
 
 ```
 
@@ -187,6 +609,22 @@ ggplot(df_plot[df_plot$variable!="Residuals",],aes(x=variable, y=SSR, fill=varia
         legend.position = "none") 
 ```
 
+Alternative graph
+
+```{r, fig.height=5, fig.width=12}
+ggplot(df_plot[df_plot$variable!="Residuals",],aes(x=Index, y=SSR*100, fill=variable)) + 
+ # coord_flip() + 
+#  facet_wrap( ~ Index, ncol=5) +
+  geom_bar(stat="identity", colour="black") + 
+  ylab("Variance explained (%)") +
+  #ggtitle("ANOVA 2005 - 2015 (pooled)") +
+  theme_bw(base_size = 16) + 
+  theme(axis.title.x = element_blank(),
+        plot.title = element_text(size=12),
+        panel.spacing = unit(1,"lines")) 
+
+```
+
 From the above we can conclude that the 2000 - 2015 pooled ANOVA is not very different from the 2005 - 2015 pooled ANOVA. Education, a covariate only available from 2005 does not seem to be important in explaining variance in job quality indexes.
 
 # ANOVA, by year
@@ -286,4 +724,3 @@ The plots show that the proportion of variance explained by each covariate did n
 # Conclusion
 
 Depending on the index, the covariates included here explain about a quarter of the variance. This means that the inequalities in job quality are mostly explained by other variables or is random. Sector, occupation and country are the most important predictors and employment status is relevant for some indexes. Sex, age, education and workplace size seem to not be related at all. This may be the result of endogeneity, e.g. lower educated workers being more present in certain sectors. Over time there is very little change in the proportion of variance that each of the variables explains; it seems to be quite constant so there is no evidence to suggest that inequalities today are driven by other things than that were driving inequalities in the visible past. 
-
